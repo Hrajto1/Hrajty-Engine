@@ -1,7 +1,14 @@
 from flask import Flask, request, render_template, jsonify
-import sqlite3
+import psycopg2
+import os
 
 app = Flask(__name__)
+
+# Supabase / Postgres connection (z environment variables)
+DB_URL = os.environ.get("DB_URL")  # něco jako: postgres://user:pass@host:port/dbname
+
+def get_conn():
+    return psycopg2.connect(DB_URL)
 
 @app.route("/", methods=["GET"])
 def search():
@@ -9,16 +16,16 @@ def search():
     results = []
 
     if query:
-        conn = sqlite3.connect('hrajty.db')
+        conn = get_conn()
         c = conn.cursor()
         c.execute("""
             SELECT url, title, description, icon,
-                   CASE WHEN LOWER(title) LIKE ? THEN 0 ELSE 1 END AS rank
+                   CASE WHEN LOWER(title) LIKE %s THEN 0 ELSE 1 END AS rank
             FROM pages
-            WHERE content LIKE ? OR title LIKE ? OR description LIKE ?
+            WHERE content ILIKE %s OR title ILIKE %s OR description ILIKE %s
             ORDER BY rank, title ASC
             LIMIT 50
-        """, ('{}%'.format(query.lower()), '%'+query+'%', '%'+query+'%', '%'+query+'%'))
+        """, (f'{query.lower()}%', f'%{query}%', f'%{query}%', f'%{query}%'))
         rows = c.fetchall()
         conn.close()
 
@@ -26,28 +33,25 @@ def search():
 
     return render_template("search.html", results=results, query=query)
 
-
 @app.route("/suggest")
 def suggest():
     term = request.args.get("term", "")
     suggestions = []
 
     if term:
-        conn = sqlite3.connect('hrajty.db')
+        conn = get_conn()
         c = conn.cursor()
         c.execute("""
             SELECT DISTINCT title
             FROM pages
-            WHERE title LIKE ? OR content LIKE ?
+            WHERE title ILIKE %s OR content ILIKE %s
             LIMIT 10
-        """, ('{}%'.format(term), '%'+term+'%'))
+        """, (f'{term}%', f'%{term}%'))
         suggestions = [row[0] for row in c.fetchall()]
         conn.close()
 
-    # Seřadíme návrhy tak, aby začínaly termínem nahoře
     suggestions.sort(key=lambda s: (0 if s.lower().startswith(term.lower()) else 1, s))
     return jsonify(suggestions)
 
-
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
